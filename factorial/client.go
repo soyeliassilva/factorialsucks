@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"math/rand"
 
 	"github.com/briandowns/spinner"
 	"golang.org/x/net/publicsuffix"
@@ -97,56 +98,68 @@ func NewFactorialClient(email, password string, year, month int, in, out string,
 }
 
 func (c *factorialClient) ClockIn(dry_run bool) {
-	spinner := spinner.New(spinner.CharSets[14], 60*time.Millisecond)
-	var t time.Time
-	var message string
-	var body []byte
-	var shift shift
-	var resp *http.Response
-	var ok bool
-	now := time.Now()
-	shift.Period_id = int64(c.period_id)
-	shift.Clock_in = c.clock_in
-	shift.Clock_out = c.clock_out
-	shift.Minutes = 0
-	for _, d := range c.calendar {
-		spinner.Restart()
-		spinner.Reverse()
-		t = time.Date(c.year, time.Month(c.month), d.Day, 0, 0, 0, 0, time.UTC)
-		message = fmt.Sprintf("%s... ", t.Format("02 Jan"))
-		spinner.Prefix = message + " "
-		clocked_in, clocked_times := c.clockedIn(d.Day, shift)
-		if clocked_in {
-			message = fmt.Sprintf("%s ❌ Period overlap: %s\n", message, clocked_times)
-		} else if d.Is_leave {
-			message = fmt.Sprintf("%s ❌ %s\n", message, d.Leave_name)
-		} else if !d.Is_laborable {
-			message = fmt.Sprintf("%s ❌ %s\n", message, t.Format("Monday"))
-		} else if c.today_only && d.Day != now.Day() {
-			message = fmt.Sprintf("%s ❌ %s\n", message, "Skipping: --today")
-		} else if c.until_today && d.Day > now.Day() {
-			message = fmt.Sprintf("%s ❌ %s\n", message, "Skipping: --until-today")
-		} else {
-			ok = true
-			if !dry_run {
-				ok = false
-				shift.Day = d.Day
-				body, _ = json.Marshal(shift)
-				resp, _ = c.Post(BASE_URL+"/attendance/shifts", "application/json;charset=UTF-8", bytes.NewBuffer(body))
-				if resp.StatusCode == 201 {
-					ok = true
-				}
-			}
-			if ok {
-				message = fmt.Sprintf("%s ✅ %s - %s\n", message, c.clock_in, c.clock_out)
-			} else {
-				message = fmt.Sprintf("%s ❌ Error when attempting to clock in\n", message)
-			}
-		}
-		spinner.Stop()
-		fmt.Print(message)
-	}
-	fmt.Println("done!")
+    spinner := spinner.New(spinner.CharSets[14], 60*time.Millisecond)
+    var t time.Time
+    var message string
+    var body []byte
+    var shift shift
+    var resp *http.Response
+    var ok bool
+    now := time.Now()
+    shift.Period_id = int64(c.period_id)
+    shift.Minutes = 0
+    for _, d := range c.calendar {
+        spinner.Restart()
+        spinner.Reverse()
+        t = time.Date(c.year, time.Month(c.month), d.Day, 0, 0, 0, 0, time.UTC)
+        message = fmt.Sprintf("%s... ", t.Format("02 Jan"))
+        spinner.Prefix = message + " "
+        clock_in_time, err := time.Parse("15:04", c.clock_in)
+        if err != nil {
+            handleError(spinner, err)
+        }
+        clock_out_time, err := time.Parse("15:04", c.clock_out)
+        if err != nil {
+            handleError(spinner, err)
+        }
+        clock_in_offset := time.Duration(rand.Intn(11)-5) * time.Minute
+        clock_out_offset := time.Duration(rand.Intn(11)-5) * time.Minute
+        clock_in_time = clock_in_time.Add(clock_in_offset)
+        clock_out_time = clock_out_time.Add(clock_out_offset)
+        shift.Clock_in = clock_in_time.Format("15:04")
+        shift.Clock_out = clock_out_time.Format("15:04")
+        clocked_in, clocked_times := c.clockedIn(d.Day, shift)
+        if clocked_in {
+            message = fmt.Sprintf("%s ❌ Period overlap: %s\n", message, clocked_times)
+        } else if d.Is_leave {
+            message = fmt.Sprintf("%s ❌ %s\n", message, d.Leave_name)
+        } else if !d.Is_laborable {
+            message = fmt.Sprintf("%s ❌ %s\n", message, t.Format("Monday"))
+        } else if c.today_only && d.Day != now.Day() {
+            message = fmt.Sprintf("%s ❌ %s\n", message, "Skipping: --today")
+        } else if c.until_today && d.Day > now.Day() {
+            message = fmt.Sprintf("%s ❌ %s\n", message, "Skipping: --until-today")
+        } else {
+            ok = true
+            if !dry_run {
+                ok = false
+                shift.Day = d.Day
+                body, _ = json.Marshal(shift)
+                resp, _ = c.Post(BASE_URL+"/attendance/shifts", "application/json;charset=UTF-8", bytes.NewBuffer(body))
+                if resp.StatusCode == 201 {
+                    ok = true
+                }
+            }
+            if ok {
+                message = fmt.Sprintf("%s ✅ %s - %s\n", message, shift.Clock_in, shift.Clock_out)
+            } else {
+                message = fmt.Sprintf("%s ❌ Error when attempting to clock in\n", message)
+            }
+        }
+        spinner.Stop()
+        fmt.Print(message)
+    }
+    fmt.Println("done!")
 }
 
 func (c *factorialClient) login(email, password string) error {
